@@ -1,0 +1,7 @@
+requests
+psycopg2-binary
+pandas
+python-dotenv
+schedule
+tenacity
+pytest
