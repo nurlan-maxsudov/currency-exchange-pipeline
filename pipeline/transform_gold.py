@@ -1,5 +1,15 @@
 import pandas as pd
 from db_connection import get_connection, get_sqlalchemy_engine
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - [%(filename)s] - %(message)s',
+    handlers=[
+        logging.FileHandler("pipeline.log", encoding="utf-8"),
+        logging.StreamHandler()
+    ]
+)
 
 def populate_dimensions():
     conn = get_connection()
@@ -30,9 +40,12 @@ def populate_dimensions():
                     ON CONFLICT (date) DO NOTHING
                 """, (d, d.year, d.month, d.day, is_weekday))
                 
-    print("Dimensions updated successfully.")
+    logging.info("Dimensions updated successfully")
 
 def load_fact_table():
+
+    logging.info("Gold layer refresh initiated: Fetching data from Silver...")
+
     conn = get_connection()
     engine = get_sqlalchemy_engine()
 
@@ -44,7 +57,7 @@ def load_fact_table():
     df = pd.read_sql(query, engine)
 
     if df.empty:
-        print("No silver records were found")
+        logging.warning("Gold Layer Warning: No silver records found in 'cleaned_rates'. Aborting refresh.")
         return
 
     #computing new columns (rate_change_pct and rolling_7day_avg)
@@ -61,26 +74,26 @@ def load_fact_table():
         .transform(lambda x: x.rolling(window=7, min_periods=1).mean())
     )
 
+    gold_records = []
+    for _, row in df.iterrows():
+        gold_records.append((
+            row['date'].date(),
+            row['target_currency'],
+            float(row['exchange_rate']),
+            float(row['rate_change_pct']),
+            float(row['rolling_7_day_avg']))
+        )
+
     with conn:
         with conn.cursor() as cursor:
+            logging.info("Truncating old Gold table 'aggregated_rates' for full refresh.")
             cursor.execute("TRUNCATE TABLE aggregated_rates")
-
-            gold_records = []
-
-            for _, row in df.iterrows():
-                gold_records.append((
-                    row['date'].date(),
-                    row['target_currency'],
-                    float(row['exchange_rate']),
-                    float(row['rate_change_pct']),
-                    float(row['rolling_7_day_avg']))
-                )
-
+            
             cursor.executemany("""
                     INSERT INTO aggregated_rates (date, target_currency, exchange_rate, rate_change_pct, avg_7_day)
                     VALUES (%s,%s, %s, %s, %s)
                                """, gold_records)
-    print(f"Gold fact table updated.")
+    logging.info(f"Gold Layer Refresh Complete -> Successfully calculated and loaded {len(gold_records)} metric rows.")
 
 if __name__ == "__main__":
     populate_dimensions()

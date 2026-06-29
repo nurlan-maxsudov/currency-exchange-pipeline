@@ -1,6 +1,5 @@
 from extract import fetch_rates
 from db_connection import get_connection
-import json
 
 def get_latest_date():
     conn = get_connection()
